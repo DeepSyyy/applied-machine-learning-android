@@ -1,7 +1,10 @@
 package com.dicoding.asclepius.view
 
+import android.content.Context
 import android.content.Intent
 import android.content.Intent.ACTION_GET_CONTENT
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
@@ -9,8 +12,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import com.dicoding.asclepius.databinding.ActivityMainBinding
-import com.dicoding.asclepius.helper.ImageClassifierHelper
-import org.tensorflow.lite.task.vision.classifier.Classifications
+import com.dicoding.asclepius.helper.CancerClassficiationHelper
 import java.text.NumberFormat
 
 class MainActivity : AppCompatActivity() {
@@ -18,7 +20,7 @@ class MainActivity : AppCompatActivity() {
 
     private var currentImageUri: Uri? = null
 
-    private lateinit var imageClassifierHelper: ImageClassifierHelper
+    private lateinit var imageClassifierHelper: CancerClassficiationHelper
 
     private var res: String = ""
 
@@ -26,36 +28,40 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        imageClassifierHelper = ImageClassifierHelper(
+        imageClassifierHelper = CancerClassficiationHelper(
             context = this,
-            listener = object : ImageClassifierHelper.ClassifierListener {
-                override fun onResults(results: List<Classifications>?) {
-                    Log.d("OnResult", results.toString())
-                    results?.let {
-                        Log.d("Hasil", it[0].categories.toString())
-                        if (it.isNotEmpty() && it[0].categories.isNotEmpty()) {
-
-                            val sortedCategories =
-                                it[0].categories.sortedByDescending { it?.score }
-                            val displayResult =
-                                sortedCategories.joinToString("\n") {
-                                    "${it.label} " + NumberFormat.getPercentInstance()
-                                        .format(it.score).trim()
-                                }
-
-                            res = displayResult
-                            moveToResult()
-
-                        } else {
-                            showToast("Tidak dapat mengenali gambar")
-                        }
+            classifierListener = object : CancerClassficiationHelper.ClassifierListener {
+                override fun onError(error: String) {
+                    runOnUiThread {
+                        showToast(error)
                     }
                 }
 
-                override fun onError(error: String) {
-                    showToast(error)
+                override fun onResults(results: FloatArray) {
+                    runOnUiThread {
+                        if (results.isNotEmpty()) {
+                            var highest = 0
+                            val displayResult = results.mapIndexed { index, value ->
+                                if (value > results[highest]) {
+                                    highest = index
+                                }
+                                when (index) {
+                                    0 -> "Benign: ${NumberFormat.getPercentInstance().format(value)}"
+                                    1 -> "Malignant: ${NumberFormat.getPercentInstance().format(1 - value)}"
+                                    else -> "Unknown"
+                                }
+                            }
+                            res = displayResult.joinToString("\n")
+                            moveToResult()
+                        } else {
+                            showToast("No result")
+                        }
+
+                    }
                 }
-            })
+            }
+        )
+
 
         binding.galleryButton.setOnClickListener {
             startGallery()
@@ -95,8 +101,23 @@ class MainActivity : AppCompatActivity() {
     private fun analyzeImage() {
         Log.d("ImageUri", "Image Uri: $currentImageUri")
         currentImageUri?.let {
-            imageClassifierHelper.classifyStaticImage(it)
+            imageClassifierHelper.classifyStaticImage(
+                toBitmap(
+                    this,
+                    it
+                )
+            )
         }
+    }
+
+    private fun toBitmap(context: Context, image: Uri): Bitmap {
+        val contentResolver = context.contentResolver
+
+        val inputStream = contentResolver.openInputStream(image)
+        val bitmap = BitmapFactory.decodeStream(inputStream)
+
+        inputStream?.close()
+        return bitmap
     }
 
     private fun moveToResult() {
